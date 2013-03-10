@@ -71,31 +71,43 @@ namespace JWT
 		public static string Decode(string token, string key, bool verify = true)
 		{
 			var parts = token.Split('.');
+            // Avoid index out of bounds 
+            if (parts.Length < 3)
+            {
+                throw new SignatureVerificationException("Invalid token. Expected Encoded JWS header, JWS Payload and JWS Signature to be separated by '.'");
+            }
 			var header = parts[0];
 			var payload = parts[1];
 			byte[] crypto = Base64UrlDecode(parts[2]);
 
 			var headerJson = Encoding.UTF8.GetString(Base64UrlDecode(header));
-			var headerData = jsonSerializer.Deserialize<Dictionary<string,object>>(headerJson);
-			var payloadJson = Encoding.UTF8.GetString(Base64UrlDecode(payload));
+            try
+            {
+                var headerData = jsonSerializer.Deserialize<Dictionary<string, object>>(headerJson);
+                var payloadJson = Encoding.UTF8.GetString(Base64UrlDecode(payload));
 
-			if (verify)
-			{
-				var bytesToSign = Encoding.UTF8.GetBytes(string.Concat(header, ".", payload));
-				var keyBytes = Encoding.UTF8.GetBytes(key);
-				var algorithm = (string)headerData["alg"];
+                if (verify)
+                {
+                    var bytesToSign = Encoding.UTF8.GetBytes(string.Concat(header, ".", payload));
+                    var keyBytes = Encoding.UTF8.GetBytes(key);
+                    var algorithm = (string)headerData["alg"];
 
-				var signature = HashAlgorithms[GetHashAlgorithm(algorithm)](keyBytes, bytesToSign);
-				var decodedCrypto = Convert.ToBase64String(crypto);
-				var decodedSignature = Convert.ToBase64String(signature);
+                    var signature = HashAlgorithms[GetHashAlgorithm(algorithm)](keyBytes, bytesToSign);
+                    var decodedCrypto = Convert.ToBase64String(crypto);
+                    var decodedSignature = Convert.ToBase64String(signature);
 
-				if (decodedCrypto != decodedSignature)
-				{
-					throw new SignatureVerificationException(string.Format("Invalid signature. Expected {0} got {1}", decodedCrypto, decodedSignature));
-				}
-			}
+                    if (decodedCrypto != decodedSignature)
+                    {
+                        throw new SignatureVerificationException(string.Format("Invalid JWS signature. Expected {0} got {1}", decodedCrypto, decodedSignature));
+                    }
+                }
 
-			return payloadJson;
+                return payloadJson;           
+            }
+            catch (ArgumentException)
+            {
+                throw new SignatureVerificationException("Invalid JWS header: " + headerJson);
+            } 
 		}
 
 		/// <summary>
@@ -109,8 +121,15 @@ namespace JWT
 		public static object DecodeToObject(string token, string key, bool verify = true)
 		{
 			var payloadJson = JsonWebToken.Decode(token, key, verify);
-			var payloadData = jsonSerializer.Deserialize<Dictionary<string,object>>(payloadJson);
-			return payloadData;
+            try
+            {
+                var payloadData = jsonSerializer.Deserialize<Dictionary<string, object>>(payloadJson);
+                return payloadJson;
+            }
+            catch (ArgumentException)
+            {
+                throw new SignatureVerificationException("Invalid JWS Claims Set: " + payloadJson);
+            }
 		}
 
 		private static JwtHashAlgorithm GetHashAlgorithm(string algorithm)
@@ -120,7 +139,7 @@ namespace JWT
 				case "HS256": return JwtHashAlgorithm.HS256;
 				case "HS384": return JwtHashAlgorithm.HS384;
 				case "HS512": return JwtHashAlgorithm.HS512;
-				default: throw new SignatureVerificationException("Algorithm not supported.");
+                default: throw new SignatureVerificationException("Algorithm not supported: " + algorithm);
 			}
 		}
 
@@ -145,7 +164,7 @@ namespace JWT
 				case 0: break; // No pad chars in this case
 				case 2: output += "=="; break; // Two pad chars
 				case 3: output += "="; break; // One pad char
-				default: throw new System.Exception("Illegal base64url string!");
+                default: throw new SignatureVerificationException("Illegal base64url string: " + input);
 			}
 			var converted = Convert.FromBase64String(output); // Standard base64 decoder
 			return converted;
